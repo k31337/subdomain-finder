@@ -10,6 +10,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as FutureTimeoutError
 
 import requests
+from tqdm import tqdm
 
 
 def load_wordlist(path):
@@ -82,7 +83,7 @@ def find_subdomains(domain, wordlist, threads=50, check_http_status=False,
             limiter.wait()
             futures[executor.submit(resolve, word, domain, retries=retries)] = word
 
-        for future in as_completed(futures):
+        for future in tqdm(as_completed(futures), total=len(futures), desc="Resolving", unit="host"):
             try:
                 result = future.result(timeout=timeout)
             except FutureTimeoutError:
@@ -93,7 +94,7 @@ def find_subdomains(domain, wordlist, threads=50, check_http_status=False,
 
             if "error" in result:
                 errors.append(result)
-                print(f"[!] {result['host']} -> {result['error']}", file=sys.stderr)
+                tqdm.write(f"[!] {result['host']} -> {result['error']}", file=sys.stderr)
                 continue
 
             host, ip = result["host"], result["ip"]
@@ -103,7 +104,7 @@ def find_subdomains(domain, wordlist, threads=50, check_http_status=False,
                 if http_result:
                     entry["url"], entry["status"] = http_result
             found.append(entry)
-            print(f"[+] {host} -> {ip}")
+            tqdm.write(f"[+] {host} -> {ip}")
 
     if errors:
         print(f"[!] {len(errors)} lookups failed after retries", file=sys.stderr)
