@@ -9,6 +9,7 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as FutureTimeoutError
 
+import dns.resolver
 import requests
 from tqdm import tqdm
 
@@ -38,16 +39,39 @@ class RateLimiter:
             time.sleep(delay)
 
 
-def resolve(subdomain, domain, retries=2, backoff=0.5):
+class ResolverPool:
+    """Round-robins DNS lookups across a set of nameservers."""
+
+    def __init__(self, nameservers=None):
+        self.nameservers = nameservers
+        self._lock = threading.Lock()
+        self._index = 0
+
+    def next_resolver(self):
+        if not self.nameservers:
+            return None
+        with self._lock:
+            ns = self.nameservers[self._index % len(self.nameservers)]
+            self._index += 1
+        resolver = dns.resolver.Resolver()
+        resolver.nameservers = [ns]
+        return resolver
+
+
+def resolve(subdomain, domain, retries=2, backoff=0.5, resolver=None):
     host = f"{subdomain}.{domain}"
     last_error = None
     for attempt in range(retries + 1):
         try:
-            ip = socket.gethostbyname(host)
+            if resolver is not None:
+                answer = resolver.resolve(host, "A")
+                ip = answer[0].to_text()
+            else:
+                ip = socket.gethostbyname(host)
             return {"host": host, "ip": ip}
-        except socket.gaierror:
+        except (socket.gaierror, dns.resolver.NXDOMAIN, dns.resolver.NoAnswer):
             return None
-        except OSError as exc:
+        except (OSError, dns.exception.DNSException) as exc:
             last_error = exc
             if attempt < retries:
                 time.sleep(backoff * (2 ** attempt))
@@ -72,16 +96,18 @@ def check_http(host, timeout=5, retries=1, backoff=0.5):
 
 
 def find_subdomains(domain, wordlist, threads=50, check_http_status=False,
-                     timeout=3, retries=2, rate_limit=0):
+                     timeout=3, retries=2, rate_limit=0, nameservers=None):
     found = []
     errors = []
     limiter = RateLimiter(rate_limit)
+    pool = ResolverPool(nameservers)
 
     with ThreadPoolExecutor(max_workers=threads) as executor:
         futures = {}
         for word in wordlist:
             limiter.wait()
-            futures[executor.submit(resolve, word, domain, retries=retries)] = word
+            resolver = pool.next_resolver()
+            futures[executor.submit(resolve, word, domain, retries=retries, resolver=resolver)] = word
 
         for future in tqdm(as_completed(futures), total=len(futures), desc="Resolving", unit="host"):
             try:
@@ -164,6 +190,11 @@ def main():
         help="Maximum DNS lookups per second across all threads, 0 = unlimited (default: 0)"
     )
     parser.add_argument(
+        "--resolvers",
+        help="Comma-separated list of DNS resolver IPs to round-robin lookups across "
+             "(default: system resolver), e.g. 8.8.8.8,1.1.1.1"
+    )
+    parser.add_argument(
         "-o", "--output", help="File to save the results to"
     )
     parser.add_argument(
@@ -179,9 +210,11 @@ def main():
         sys.exit(1)
 
     print(f"[*] Searching for subdomains of {args.domain} ({len(wordlist)} candidates)...")
+    nameservers = [ns.strip() for ns in args.resolvers.split(",") if ns.strip()] if args.resolvers else None
     results = find_subdomains(
         args.domain, wordlist, threads=args.threads, check_http_status=args.http,
-        timeout=args.timeout, retries=args.retries, rate_limit=args.rate_limit
+        timeout=args.timeout, retries=args.retries, rate_limit=args.rate_limit,
+        nameservers=nameservers
     )
 
     print(f"\n[*] Total found: {len(results)}")
