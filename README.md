@@ -20,11 +20,12 @@ Options:
 - `-t, --threads`: number of concurrent threads (default 50)
 - `--http`: check whether the subdomain responds over HTTP/HTTPS
 - `-o, --output`: file to save the results to
+- `-f, --format`: output format (`txt`, `json`, `csv`); inferred from the output file extension if not set, defaults to `txt`
 
 Example:
 
 ```bash
-python subdomain_finder.py example.com -w wordlists/subdomains.txt --http -o results.txt
+python subdomain_finder.py example.com -w wordlists/subdomains.txt --http -o results.json
 ```
 
 ## Disclaimer
