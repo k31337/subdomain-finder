@@ -5,7 +5,9 @@ import json
 import os
 import socket
 import sys
-from concurrent.futures import ThreadPoolExecutor, as_completed
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as FutureTimeoutError
 
 import requests
 
@@ -15,41 +17,97 @@ def load_wordlist(path):
         return [line.strip() for line in f if line.strip() and not line.startswith("#")]
 
 
-def resolve(subdomain, domain):
+class RateLimiter:
+    """Caps how many operations can start per second, shared across threads."""
+
+    def __init__(self, rate):
+        self.min_interval = 1.0 / rate if rate and rate > 0 else 0
+        self._lock = threading.Lock()
+        self._next_slot = time.monotonic()
+
+    def wait(self):
+        if not self.min_interval:
+            return
+        with self._lock:
+            now = time.monotonic()
+            start = max(now, self._next_slot)
+            self._next_slot = start + self.min_interval
+            delay = start - now
+        if delay > 0:
+            time.sleep(delay)
+
+
+def resolve(subdomain, domain, retries=2, backoff=0.5):
     host = f"{subdomain}.{domain}"
-    try:
-        ip = socket.gethostbyname(host)
-        return host, ip
-    except socket.gaierror:
-        return None
+    last_error = None
+    for attempt in range(retries + 1):
+        try:
+            ip = socket.gethostbyname(host)
+            return {"host": host, "ip": ip}
+        except socket.gaierror:
+            return None
+        except OSError as exc:
+            last_error = exc
+            if attempt < retries:
+                time.sleep(backoff * (2 ** attempt))
+    return {"host": host, "error": str(last_error)}
 
 
-def check_http(host, timeout=5):
+def check_http(host, timeout=5, retries=1, backoff=0.5):
     for scheme in ("https://", "http://"):
         url = scheme + host
-        try:
-            r = requests.get(url, timeout=timeout, allow_redirects=True)
-            return url, r.status_code
-        except requests.RequestException:
-            continue
+        for attempt in range(retries + 1):
+            try:
+                r = requests.get(url, timeout=timeout, allow_redirects=True)
+                return url, r.status_code
+            except requests.Timeout:
+                if attempt < retries:
+                    time.sleep(backoff * (2 ** attempt))
+                    continue
+                break
+            except requests.RequestException:
+                break
     return None
 
 
-def find_subdomains(domain, wordlist, threads=50, check_http_status=False):
+def find_subdomains(domain, wordlist, threads=50, check_http_status=False,
+                     timeout=3, retries=2, rate_limit=0):
     found = []
+    errors = []
+    limiter = RateLimiter(rate_limit)
+
     with ThreadPoolExecutor(max_workers=threads) as executor:
-        futures = {executor.submit(resolve, word, domain): word for word in wordlist}
+        futures = {}
+        for word in wordlist:
+            limiter.wait()
+            futures[executor.submit(resolve, word, domain, retries=retries)] = word
+
         for future in as_completed(futures):
-            result = future.result()
-            if result:
-                host, ip = result
-                entry = {"host": host, "ip": ip}
-                if check_http_status:
-                    http_result = check_http(host)
-                    if http_result:
-                        entry["url"], entry["status"] = http_result
-                found.append(entry)
-                print(f"[+] {host} -> {ip}")
+            try:
+                result = future.result(timeout=timeout)
+            except FutureTimeoutError:
+                result = {"host": f"{futures[future]}.{domain}", "error": "lookup timed out"}
+
+            if not result:
+                continue
+
+            if "error" in result:
+                errors.append(result)
+                print(f"[!] {result['host']} -> {result['error']}", file=sys.stderr)
+                continue
+
+            host, ip = result["host"], result["ip"]
+            entry = {"host": host, "ip": ip}
+            if check_http_status:
+                http_result = check_http(host, timeout=timeout)
+                if http_result:
+                    entry["url"], entry["status"] = http_result
+            found.append(entry)
+            print(f"[+] {host} -> {ip}")
+
+    if errors:
+        print(f"[!] {len(errors)} lookups failed after retries", file=sys.stderr)
+
     return found
 
 
@@ -93,6 +151,18 @@ def main():
         help="Check whether the subdomain responds over HTTP/HTTPS"
     )
     parser.add_argument(
+        "--timeout", type=float, default=3,
+        help="Timeout in seconds for each DNS/HTTP lookup (default: 3)"
+    )
+    parser.add_argument(
+        "--retries", type=int, default=2,
+        help="Number of retries for a lookup before giving up (default: 2)"
+    )
+    parser.add_argument(
+        "--rate-limit", type=float, default=0,
+        help="Maximum DNS lookups per second across all threads, 0 = unlimited (default: 0)"
+    )
+    parser.add_argument(
         "-o", "--output", help="File to save the results to"
     )
     parser.add_argument(
@@ -108,7 +178,10 @@ def main():
         sys.exit(1)
 
     print(f"[*] Searching for subdomains of {args.domain} ({len(wordlist)} candidates)...")
-    results = find_subdomains(args.domain, wordlist, threads=args.threads, check_http_status=args.http)
+    results = find_subdomains(
+        args.domain, wordlist, threads=args.threads, check_http_status=args.http,
+        timeout=args.timeout, retries=args.retries, rate_limit=args.rate_limit
+    )
 
     print(f"\n[*] Total found: {len(results)}")
 
