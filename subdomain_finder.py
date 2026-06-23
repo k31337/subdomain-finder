@@ -3,7 +3,9 @@ import argparse
 import csv
 import json
 import os
+import random
 import socket
+import string
 import sys
 import threading
 import time
@@ -78,6 +80,21 @@ def resolve(subdomain, domain, retries=2, backoff=0.5, resolver=None):
     return {"host": host, "error": str(last_error)}
 
 
+def detect_wildcard(domain, resolver=None, retries=1, samples=2):
+    """Probes random non-existent subdomains to detect wildcard DNS.
+
+    Returns the set of IPs a wildcard record resolves to, or an empty
+    set if no wildcard is configured.
+    """
+    ips = set()
+    for _ in range(samples):
+        label = "".join(random.choices(string.ascii_lowercase + string.digits, k=20))
+        result = resolve(label, domain, retries=retries, resolver=resolver)
+        if result and "ip" in result:
+            ips.add(result["ip"])
+    return ips
+
+
 def check_http(host, timeout=5, retries=1, backoff=0.5):
     for scheme in ("https://", "http://"):
         url = scheme + host
@@ -96,11 +113,22 @@ def check_http(host, timeout=5, retries=1, backoff=0.5):
 
 
 def find_subdomains(domain, wordlist, threads=50, check_http_status=False,
-                     timeout=3, retries=2, rate_limit=0, nameservers=None):
+                     timeout=3, retries=2, rate_limit=0, nameservers=None,
+                     skip_wildcard_check=False):
     found = []
     errors = []
     limiter = RateLimiter(rate_limit)
     pool = ResolverPool(nameservers)
+
+    wildcard_ips = set()
+    if not skip_wildcard_check:
+        wildcard_ips = detect_wildcard(domain, resolver=pool.next_resolver(), retries=retries)
+        if wildcard_ips:
+            print(
+                f"[!] Wildcard DNS detected for *.{domain} -> {', '.join(sorted(wildcard_ips))} "
+                "(matching results will be excluded)",
+                file=sys.stderr,
+            )
 
     with ThreadPoolExecutor(max_workers=threads) as executor:
         futures = {}
@@ -124,6 +152,8 @@ def find_subdomains(domain, wordlist, threads=50, check_http_status=False,
                 continue
 
             host, ip = result["host"], result["ip"]
+            if ip in wildcard_ips:
+                continue
             entry = {"host": host, "ip": ip}
             if check_http_status:
                 http_result = check_http(host, timeout=timeout)
@@ -190,6 +220,10 @@ def main():
         help="Maximum DNS lookups per second across all threads, 0 = unlimited (default: 0)"
     )
     parser.add_argument(
+        "--no-wildcard-check", action="store_true",
+        help="Skip wildcard DNS detection (by default, results matching a wildcard IP are excluded)"
+    )
+    parser.add_argument(
         "--resolvers",
         help="Comma-separated list of DNS resolver IPs to round-robin lookups across "
              "(default: system resolver), e.g. 8.8.8.8,1.1.1.1"
@@ -214,7 +248,7 @@ def main():
     results = find_subdomains(
         args.domain, wordlist, threads=args.threads, check_http_status=args.http,
         timeout=args.timeout, retries=args.retries, rate_limit=args.rate_limit,
-        nameservers=nameservers
+        nameservers=nameservers, skip_wildcard_check=args.no_wildcard_check
     )
 
     print(f"\n[*] Total found: {len(results)}")

@@ -12,6 +12,7 @@ A Python CLI tool to discover subdomains of a target domain via concurrent DNS r
 - Per-lookup retries with exponential backoff
 - Global rate limiting shared across all threads
 - Round-robin DNS resolution across multiple nameservers
+- Wildcard DNS detection, automatically filtering out false positives
 - Export results as `txt`, `json`, or `csv`
 
 ## Installation
@@ -41,6 +42,7 @@ python subdomain_finder.py example.com
 | `--retries` | Number of retries for a lookup before giving up | `2` |
 | `--rate-limit` | Maximum DNS lookups per second across all threads, `0` = unlimited | `0` |
 | `--resolvers` | Comma-separated list of DNS resolver IPs to round-robin lookups across, e.g. `8.8.8.8,1.1.1.1` | system resolver |
+| `--no-wildcard-check` | Skip wildcard DNS detection | off (check enabled) |
 | `-o, --output` | File to save the results to | none |
 | `-f, --format` | Output format: `txt`, `json`, or `csv` (inferred from `--output` extension if not set) | `txt` |
 
