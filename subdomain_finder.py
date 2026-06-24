@@ -95,6 +95,32 @@ def detect_wildcard(domain, resolver=None, retries=1, samples=2):
     return ips
 
 
+def fetch_crtsh_subdomains(domain, timeout=10):
+    """Queries crt.sh certificate transparency logs for known subdomains.
+
+    Returns a set of subdomain labels (relative to `domain`) found in
+    certificate SANs, or an empty set if the query fails.
+    """
+    url = f"https://crt.sh/?q=%.{domain}&output=json"
+    try:
+        r = requests.get(url, timeout=timeout)
+        r.raise_for_status()
+        entries = r.json()
+    except (requests.RequestException, ValueError):
+        return set()
+
+    suffix = f".{domain}"
+    labels = set()
+    for entry in entries:
+        for name in entry.get("name_value", "").splitlines():
+            name = name.strip().lower().lstrip("*.")
+            if name.endswith(suffix):
+                label = name[: -len(suffix)]
+                if label:
+                    labels.add(label)
+    return labels
+
+
 def check_http(host, timeout=5, retries=1, backoff=0.5):
     for scheme in ("https://", "http://"):
         url = scheme + host
@@ -224,6 +250,10 @@ def main():
         help="Skip wildcard DNS detection (by default, results matching a wildcard IP are excluded)"
     )
     parser.add_argument(
+        "--crt-sh", action="store_true",
+        help="Augment the wordlist with subdomains found via crt.sh certificate transparency logs"
+    )
+    parser.add_argument(
         "--resolvers",
         help="Comma-separated list of DNS resolver IPs to round-robin lookups across "
              "(default: system resolver), e.g. 8.8.8.8,1.1.1.1"
@@ -242,6 +272,13 @@ def main():
     except FileNotFoundError:
         print(f"[!] Wordlist not found: {args.wordlist}", file=sys.stderr)
         sys.exit(1)
+
+    if args.crt_sh:
+        print(f"[*] Querying crt.sh for {args.domain}...")
+        crtsh_labels = fetch_crtsh_subdomains(args.domain)
+        new_labels = crtsh_labels - set(wordlist)
+        print(f"[*] crt.sh returned {len(crtsh_labels)} subdomains ({len(new_labels)} new)")
+        wordlist = wordlist + sorted(new_labels)
 
     print(f"[*] Searching for subdomains of {args.domain} ({len(wordlist)} candidates)...")
     nameservers = [ns.strip() for ns in args.resolvers.split(",") if ns.strip()] if args.resolvers else None

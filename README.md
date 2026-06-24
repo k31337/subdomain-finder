@@ -13,6 +13,7 @@ A Python CLI tool to discover subdomains of a target domain via concurrent DNS r
 - Global rate limiting shared across all threads
 - Round-robin DNS resolution across multiple nameservers
 - Wildcard DNS detection, automatically filtering out false positives
+- Passive subdomain discovery via crt.sh certificate transparency logs
 - Export results as `txt`, `json`, or `csv`
 
 ## Installation
@@ -43,6 +44,7 @@ python subdomain_finder.py example.com
 | `--rate-limit` | Maximum DNS lookups per second across all threads, `0` = unlimited | `0` |
 | `--resolvers` | Comma-separated list of DNS resolver IPs to round-robin lookups across, e.g. `8.8.8.8,1.1.1.1` | system resolver |
 | `--no-wildcard-check` | Skip wildcard DNS detection | off (check enabled) |
+| `--crt-sh` | Augment the wordlist with subdomains found via crt.sh certificate transparency logs | off |
 | `-o, --output` | File to save the results to | none |
 | `-f, --format` | Output format: `txt`, `json`, or `csv` (inferred from `--output` extension if not set) | `txt` |
 
@@ -64,6 +66,12 @@ Stay under a target's rate limit:
 
 ```bash
 python subdomain_finder.py example.com --rate-limit 10 -t 10
+```
+
+Combine brute-force with passive subdomains found via crt.sh:
+
+```bash
+python subdomain_finder.py example.com --crt-sh -o results.json
 ```
 
 ## Wordlists
