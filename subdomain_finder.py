@@ -15,6 +15,8 @@ import dns.resolver
 import requests
 from tqdm import tqdm
 
+USER_AGENT = "Mozilla/5.0 (compatible; subdomain-finder)"
+
 
 def load_wordlist(path):
     with open(path, "r", encoding="utf-8") as f:
@@ -103,7 +105,7 @@ def fetch_crtsh_subdomains(domain, timeout=10):
     """
     url = f"https://crt.sh/?q=%.{domain}&output=json"
     try:
-        r = requests.get(url, timeout=timeout)
+        r = requests.get(url, timeout=timeout, headers={"User-Agent": USER_AGENT})
         r.raise_for_status()
         entries = r.json()
     except (requests.RequestException, ValueError):
@@ -126,7 +128,7 @@ def check_http(host, timeout=5, retries=1, backoff=0.5):
         url = scheme + host
         for attempt in range(retries + 1):
             try:
-                r = requests.get(url, timeout=timeout, allow_redirects=True)
+                r = requests.get(url, timeout=timeout, allow_redirects=True, headers={"User-Agent": USER_AGENT})
                 return url, r.status_code
             except requests.Timeout:
                 if attempt < retries:
