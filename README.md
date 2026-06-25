@@ -1,7 +1,7 @@
 # subdomain-finder
 
 ![Python](https://img.shields.io/badge/python-3.8%2B-blue)
-![License](https://img.shields.io/badge/license-GPL--3.0-green)
+![License](https://img.shields.io/badge/license-MIT-green)
 
 A Python CLI tool to discover subdomains of a target domain via concurrent DNS resolution, with optional HTTP verification, rate limiting, and multi-resolver support.
 
@@ -84,4 +84,4 @@ Only use this tool on domains you are authorized to test. Unauthorized scanning 
 
 ## License
 
-[GPL-3.0](LICENSE)
+[MIT](LICENSE)
