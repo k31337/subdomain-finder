@@ -13,7 +13,10 @@ from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as
 
 import dns.resolver
 import requests
+from colorama import Fore, Style, init as colorama_init
 from tqdm import tqdm
+
+colorama_init()
 
 USER_AGENT = "Mozilla/5.0 (compatible; subdomain-finder)"
 
@@ -153,8 +156,8 @@ def find_subdomains(domain, wordlist, threads=50, check_http_status=False,
         wildcard_ips = detect_wildcard(domain, resolver=pool.next_resolver(), retries=retries)
         if wildcard_ips:
             print(
-                f"[!] Wildcard DNS detected for *.{domain} -> {', '.join(sorted(wildcard_ips))} "
-                "(matching results will be excluded)",
+                Fore.YELLOW + f"[!] Wildcard DNS detected for *.{domain} -> {', '.join(sorted(wildcard_ips))} "
+                "(matching results will be excluded)" + Style.RESET_ALL,
                 file=sys.stderr,
             )
 
@@ -176,7 +179,7 @@ def find_subdomains(domain, wordlist, threads=50, check_http_status=False,
 
             if "error" in result:
                 errors.append(result)
-                tqdm.write(f"[!] {result['host']} -> {result['error']}", file=sys.stderr)
+                tqdm.write(Fore.RED + f"[!] {result['host']} -> {result['error']}" + Style.RESET_ALL, file=sys.stderr)
                 continue
 
             host, ip = result["host"], result["ip"]
@@ -188,10 +191,11 @@ def find_subdomains(domain, wordlist, threads=50, check_http_status=False,
                 if http_result:
                     entry["url"], entry["status"] = http_result
             found.append(entry)
-            tqdm.write(f"[+] {host} -> {ip}")
+            status_part = f" ({entry['url']} [{entry['status']}])" if "url" in entry else ""
+            tqdm.write(Fore.GREEN + f"[+] {host} -> {ip}" + Style.RESET_ALL + status_part)
 
     if errors:
-        print(f"[!] {len(errors)} lookups failed after retries", file=sys.stderr)
+        print(Fore.RED + f"[!] {len(errors)} lookups failed after retries" + Style.RESET_ALL, file=sys.stderr)
 
     return found
 
@@ -208,7 +212,7 @@ def find_subdomains_recursive(domain, wordlist, max_depth=1, threads=50, check_h
         level_results = []
         for current_domain in current_domains:
             if depth > 1:
-                print(f"[*] Recursing into {current_domain} (depth {depth})...", file=sys.stderr)
+                print(Fore.CYAN + f"[*] Recursing into {current_domain} (depth {depth})..." + Style.RESET_ALL, file=sys.stderr)
             results = find_subdomains(
                 current_domain, wordlist, threads=threads, check_http_status=check_http_status,
                 timeout=timeout, retries=retries, rate_limit=rate_limit,
@@ -314,13 +318,13 @@ def main():
         sys.exit(1)
 
     if args.crt_sh:
-        print(f"[*] Querying crt.sh for {args.domain}...")
+        print(Fore.CYAN + f"[*] Querying crt.sh for {args.domain}..." + Style.RESET_ALL)
         crtsh_labels = fetch_crtsh_subdomains(args.domain)
         new_labels = crtsh_labels - set(wordlist)
-        print(f"[*] crt.sh returned {len(crtsh_labels)} subdomains ({len(new_labels)} new)")
+        print(Fore.CYAN + f"[*] crt.sh returned {len(crtsh_labels)} subdomains ({len(new_labels)} new)" + Style.RESET_ALL)
         wordlist = wordlist + sorted(new_labels)
 
-    print(f"[*] Searching for subdomains of {args.domain} ({len(wordlist)} candidates)...")
+    print(Fore.CYAN + f"[*] Searching for subdomains of {args.domain} ({len(wordlist)} candidates)..." + Style.RESET_ALL)
     nameservers = [ns.strip() for ns in args.resolvers.split(",") if ns.strip()] if args.resolvers else None
     results = find_subdomains_recursive(
         args.domain, wordlist, max_depth=max(1, args.recursive), threads=args.threads,
@@ -328,11 +332,11 @@ def main():
         rate_limit=args.rate_limit, nameservers=nameservers, skip_wildcard_check=args.no_wildcard_check
     )
 
-    print(f"\n[*] Total found: {len(results)}")
+    print(Style.BRIGHT + f"\n[*] Total found: {len(results)}" + Style.RESET_ALL)
 
     if args.output:
         save_results(results, args.output, fmt=args.format)
-        print(f"[*] Results saved to {args.output}")
+        print(Fore.CYAN + f"[*] Results saved to {args.output}" + Style.RESET_ALL)
 
 
 if __name__ == "__main__":
