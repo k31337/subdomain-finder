@@ -145,7 +145,7 @@ def check_http(host, timeout=5, retries=1, backoff=0.5):
 
 def find_subdomains(domain, wordlist, threads=50, check_http_status=False,
                      timeout=3, retries=2, rate_limit=0, nameservers=None,
-                     skip_wildcard_check=False):
+                     skip_wildcard_check=False, quiet=False):
     found = []
     errors = []
     limiter = RateLimiter(rate_limit)
@@ -154,7 +154,7 @@ def find_subdomains(domain, wordlist, threads=50, check_http_status=False,
     wildcard_ips = set()
     if not skip_wildcard_check:
         wildcard_ips = detect_wildcard(domain, resolver=pool.next_resolver(), retries=retries)
-        if wildcard_ips:
+        if wildcard_ips and not quiet:
             print(
                 Fore.YELLOW + f"[!] Wildcard DNS detected for *.{domain} -> {', '.join(sorted(wildcard_ips))} "
                 "(matching results will be excluded)" + Style.RESET_ALL,
@@ -168,7 +168,8 @@ def find_subdomains(domain, wordlist, threads=50, check_http_status=False,
             resolver = pool.next_resolver()
             futures[executor.submit(resolve, word, domain, retries=retries, resolver=resolver)] = word
 
-        for future in tqdm(as_completed(futures), total=len(futures), desc="Resolving", unit="host"):
+        progress = tqdm(as_completed(futures), total=len(futures), desc="Resolving", unit="host", disable=quiet)
+        for future in progress:
             try:
                 result = future.result(timeout=timeout)
             except FutureTimeoutError:
@@ -179,7 +180,8 @@ def find_subdomains(domain, wordlist, threads=50, check_http_status=False,
 
             if "error" in result:
                 errors.append(result)
-                tqdm.write(Fore.RED + f"[!] {result['host']} -> {result['error']}" + Style.RESET_ALL, file=sys.stderr)
+                if not quiet:
+                    tqdm.write(Fore.RED + f"[!] {result['host']} -> {result['error']}" + Style.RESET_ALL, file=sys.stderr)
                 continue
 
             host, ip = result["host"], result["ip"]
@@ -191,10 +193,11 @@ def find_subdomains(domain, wordlist, threads=50, check_http_status=False,
                 if http_result:
                     entry["url"], entry["status"] = http_result
             found.append(entry)
-            status_part = f" ({entry['url']} [{entry['status']}])" if "url" in entry else ""
-            tqdm.write(Fore.GREEN + f"[+] {host} -> {ip}" + Style.RESET_ALL + status_part)
+            if not quiet:
+                status_part = f" ({entry['url']} [{entry['status']}])" if "url" in entry else ""
+                tqdm.write(Fore.GREEN + f"[+] {host} -> {ip}" + Style.RESET_ALL + status_part)
 
-    if errors:
+    if errors and not quiet:
         print(Fore.RED + f"[!] {len(errors)} lookups failed after retries" + Style.RESET_ALL, file=sys.stderr)
 
     return found
@@ -202,7 +205,7 @@ def find_subdomains(domain, wordlist, threads=50, check_http_status=False,
 
 def find_subdomains_recursive(domain, wordlist, max_depth=1, threads=50, check_http_status=False,
                                timeout=3, retries=2, rate_limit=0, nameservers=None,
-                               skip_wildcard_check=False):
+                               skip_wildcard_check=False, quiet=False):
     """Repeatedly applies find_subdomains to discovered hosts, up to max_depth levels deep."""
     all_results = []
     seen_hosts = set()
@@ -211,12 +214,12 @@ def find_subdomains_recursive(domain, wordlist, max_depth=1, threads=50, check_h
     for depth in range(1, max_depth + 1):
         level_results = []
         for current_domain in current_domains:
-            if depth > 1:
+            if depth > 1 and not quiet:
                 print(Fore.CYAN + f"[*] Recursing into {current_domain} (depth {depth})..." + Style.RESET_ALL, file=sys.stderr)
             results = find_subdomains(
                 current_domain, wordlist, threads=threads, check_http_status=check_http_status,
                 timeout=timeout, retries=retries, rate_limit=rate_limit,
-                nameservers=nameservers, skip_wildcard_check=skip_wildcard_check
+                nameservers=nameservers, skip_wildcard_check=skip_wildcard_check, quiet=quiet
             )
             for entry in results:
                 if entry["host"] not in seen_hosts:
@@ -298,6 +301,10 @@ def main():
         help="Augment the wordlist with subdomains found via crt.sh certificate transparency logs"
     )
     parser.add_argument(
+        "-q", "--quiet", action="store_true",
+        help="Suppress progress bar and per-host/info messages; only print fatal errors and the final summary"
+    )
+    parser.add_argument(
         "--resolvers",
         help="Comma-separated list of DNS resolver IPs to round-robin lookups across "
              "(default: system resolver), e.g. 8.8.8.8,1.1.1.1"
@@ -318,25 +325,31 @@ def main():
         sys.exit(1)
 
     if args.crt_sh:
-        print(Fore.CYAN + f"[*] Querying crt.sh for {args.domain}..." + Style.RESET_ALL)
+        if not args.quiet:
+            print(Fore.CYAN + f"[*] Querying crt.sh for {args.domain}..." + Style.RESET_ALL)
         crtsh_labels = fetch_crtsh_subdomains(args.domain)
         new_labels = crtsh_labels - set(wordlist)
-        print(Fore.CYAN + f"[*] crt.sh returned {len(crtsh_labels)} subdomains ({len(new_labels)} new)" + Style.RESET_ALL)
+        if not args.quiet:
+            print(Fore.CYAN + f"[*] crt.sh returned {len(crtsh_labels)} subdomains ({len(new_labels)} new)" + Style.RESET_ALL)
         wordlist = wordlist + sorted(new_labels)
 
-    print(Fore.CYAN + f"[*] Searching for subdomains of {args.domain} ({len(wordlist)} candidates)..." + Style.RESET_ALL)
+    if not args.quiet:
+        print(Fore.CYAN + f"[*] Searching for subdomains of {args.domain} ({len(wordlist)} candidates)..." + Style.RESET_ALL)
     nameservers = [ns.strip() for ns in args.resolvers.split(",") if ns.strip()] if args.resolvers else None
     results = find_subdomains_recursive(
         args.domain, wordlist, max_depth=max(1, args.recursive), threads=args.threads,
         check_http_status=args.http, timeout=args.timeout, retries=args.retries,
-        rate_limit=args.rate_limit, nameservers=nameservers, skip_wildcard_check=args.no_wildcard_check
+        rate_limit=args.rate_limit, nameservers=nameservers, skip_wildcard_check=args.no_wildcard_check,
+        quiet=args.quiet
     )
 
-    print(Style.BRIGHT + f"\n[*] Total found: {len(results)}" + Style.RESET_ALL)
+    if not args.quiet:
+        print(Style.BRIGHT + f"\n[*] Total found: {len(results)}" + Style.RESET_ALL)
 
     if args.output:
         save_results(results, args.output, fmt=args.format)
-        print(Fore.CYAN + f"[*] Results saved to {args.output}" + Style.RESET_ALL)
+        if not args.quiet:
+            print(Fore.CYAN + f"[*] Results saved to {args.output}" + Style.RESET_ALL)
 
 
 if __name__ == "__main__":

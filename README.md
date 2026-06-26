@@ -47,6 +47,7 @@ python subdomain_finder.py example.com
 | `--recursive` | Recursively brute-force subdomains of found subdomains, up to DEPTH levels | `1` (no recursion) |
 | `--no-wildcard-check` | Skip wildcard DNS detection | off (check enabled) |
 | `--crt-sh` | Augment the wordlist with subdomains found via crt.sh certificate transparency logs | off |
+| `-q, --quiet` | Suppress progress bar and per-host/info messages; only fatal errors and the final summary | off |
 | `-o, --output` | File to save the results to | none |
 | `-f, --format` | Output format: `txt`, `json`, or `csv` (inferred from `--output` extension if not set) | `txt` |
 
@@ -80,6 +81,12 @@ Discover subdomains nested two levels deep (e.g. `dev.api.example.com`):
 
 ```bash
 python subdomain_finder.py example.com --recursive 2
+```
+
+Run quietly for scripting/CI, only saving results to a file:
+
+```bash
+python subdomain_finder.py example.com --quiet -o results.json
 ```
 
 ## Wordlists
