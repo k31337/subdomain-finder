@@ -196,6 +196,39 @@ def find_subdomains(domain, wordlist, threads=50, check_http_status=False,
     return found
 
 
+def find_subdomains_recursive(domain, wordlist, max_depth=1, threads=50, check_http_status=False,
+                               timeout=3, retries=2, rate_limit=0, nameservers=None,
+                               skip_wildcard_check=False):
+    """Repeatedly applies find_subdomains to discovered hosts, up to max_depth levels deep."""
+    all_results = []
+    seen_hosts = set()
+    current_domains = [domain]
+
+    for depth in range(1, max_depth + 1):
+        level_results = []
+        for current_domain in current_domains:
+            if depth > 1:
+                print(f"[*] Recursing into {current_domain} (depth {depth})...", file=sys.stderr)
+            results = find_subdomains(
+                current_domain, wordlist, threads=threads, check_http_status=check_http_status,
+                timeout=timeout, retries=retries, rate_limit=rate_limit,
+                nameservers=nameservers, skip_wildcard_check=skip_wildcard_check
+            )
+            for entry in results:
+                if entry["host"] not in seen_hosts:
+                    seen_hosts.add(entry["host"])
+                    all_results.append(entry)
+                    level_results.append(entry)
+
+        if depth == max_depth:
+            break
+        current_domains = [entry["host"] for entry in level_results]
+        if not current_domains:
+            break
+
+    return all_results
+
+
 def save_results(results, path, fmt=None):
     if fmt is None:
         ext = os.path.splitext(path)[1].lower()
@@ -252,6 +285,11 @@ def main():
         help="Skip wildcard DNS detection (by default, results matching a wildcard IP are excluded)"
     )
     parser.add_argument(
+        "--recursive", type=int, default=1, metavar="DEPTH",
+        help="Recursively brute-force subdomains of found subdomains, up to DEPTH levels "
+             "(e.g. sub.sub.example.com at depth 2) (default: 1, i.e. no recursion)"
+    )
+    parser.add_argument(
         "--crt-sh", action="store_true",
         help="Augment the wordlist with subdomains found via crt.sh certificate transparency logs"
     )
@@ -284,10 +322,10 @@ def main():
 
     print(f"[*] Searching for subdomains of {args.domain} ({len(wordlist)} candidates)...")
     nameservers = [ns.strip() for ns in args.resolvers.split(",") if ns.strip()] if args.resolvers else None
-    results = find_subdomains(
-        args.domain, wordlist, threads=args.threads, check_http_status=args.http,
-        timeout=args.timeout, retries=args.retries, rate_limit=args.rate_limit,
-        nameservers=nameservers, skip_wildcard_check=args.no_wildcard_check
+    results = find_subdomains_recursive(
+        args.domain, wordlist, max_depth=max(1, args.recursive), threads=args.threads,
+        check_http_status=args.http, timeout=args.timeout, retries=args.retries,
+        rate_limit=args.rate_limit, nameservers=nameservers, skip_wildcard_check=args.no_wildcard_check
     )
 
     print(f"\n[*] Total found: {len(results)}")

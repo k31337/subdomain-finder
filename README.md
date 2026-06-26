@@ -13,6 +13,7 @@ A Python CLI tool to discover subdomains of a target domain via concurrent DNS r
 - Global rate limiting shared across all threads
 - Round-robin DNS resolution across multiple nameservers
 - Wildcard DNS detection, automatically filtering out false positives
+- Recursive brute-forcing of discovered subdomains (e.g. `sub.sub.example.com`)
 - Passive subdomain discovery via crt.sh certificate transparency logs
 - Export results as `txt`, `json`, or `csv`
 
@@ -43,6 +44,7 @@ python subdomain_finder.py example.com
 | `--retries` | Number of retries for a lookup before giving up | `2` |
 | `--rate-limit` | Maximum DNS lookups per second across all threads, `0` = unlimited | `0` |
 | `--resolvers` | Comma-separated list of DNS resolver IPs to round-robin lookups across, e.g. `8.8.8.8,1.1.1.1` | system resolver |
+| `--recursive` | Recursively brute-force subdomains of found subdomains, up to DEPTH levels | `1` (no recursion) |
 | `--no-wildcard-check` | Skip wildcard DNS detection | off (check enabled) |
 | `--crt-sh` | Augment the wordlist with subdomains found via crt.sh certificate transparency logs | off |
 | `-o, --output` | File to save the results to | none |
@@ -72,6 +74,12 @@ Combine brute-force with passive subdomains found via crt.sh:
 
 ```bash
 python subdomain_finder.py example.com --crt-sh -o results.json
+```
+
+Discover subdomains nested two levels deep (e.g. `dev.api.example.com`):
+
+```bash
+python subdomain_finder.py example.com --recursive 2
 ```
 
 ## Wordlists
