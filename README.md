@@ -7,7 +7,7 @@ A Python CLI tool to discover subdomains of a target domain via concurrent DNS r
 
 ## Features
 
-- Concurrent DNS brute-forcing using a configurable thread pool
+- Concurrent DNS brute-forcing using a configurable thread pool, resolving A, AAAA, and CNAME records
 - Optional HTTP/HTTPS liveness check on discovered hosts
 - Per-lookup retries with exponential backoff
 - Global rate limiting shared across all threads

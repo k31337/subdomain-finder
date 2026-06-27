@@ -4,7 +4,6 @@ import csv
 import json
 import os
 import random
-import socket
 import string
 import sys
 import threading
@@ -56,7 +55,7 @@ class ResolverPool:
 
     def next_resolver(self):
         if not self.nameservers:
-            return None
+            return dns.resolver.Resolver()
         with self._lock:
             ns = self.nameservers[self._index % len(self.nameservers)]
             self._index += 1
@@ -67,17 +66,33 @@ class ResolverPool:
 
 def resolve(subdomain, domain, retries=2, backoff=0.5, resolver=None):
     host = f"{subdomain}.{domain}"
+    resolver = resolver or dns.resolver.Resolver()
     last_error = None
     for attempt in range(retries + 1):
         try:
-            if resolver is not None:
-                answer = resolver.resolve(host, "A")
-                ip = answer[0].to_text()
-            else:
-                ip = socket.gethostbyname(host)
-            return {"host": host, "ip": ip}
-        except (socket.gaierror, dns.resolver.NXDOMAIN, dns.resolver.NoAnswer):
-            return None
+            entry = {"host": host}
+
+            try:
+                answer = resolver.resolve(host, "CNAME")
+                entry["cname"] = answer[0].target.to_text().rstrip(".")
+            except (dns.resolver.NXDOMAIN, dns.resolver.NoAnswer):
+                pass
+
+            ips = []
+            for record_type in ("A", "AAAA"):
+                try:
+                    answer = resolver.resolve(host, record_type)
+                    ips.extend(a.to_text() for a in answer)
+                except (dns.resolver.NXDOMAIN, dns.resolver.NoAnswer):
+                    continue
+
+            if not ips and "cname" not in entry:
+                return None
+            if ips:
+                entry["ip"] = ips[0]
+                if len(ips) > 1:
+                    entry["all_ips"] = ips
+            return entry
         except (OSError, dns.exception.DNSException) as exc:
             last_error = exc
             if attempt < retries:
@@ -184,18 +199,25 @@ def find_subdomains(domain, wordlist, threads=50, check_http_status=False,
                     tqdm.write(Fore.RED + f"[!] {result['host']} -> {result['error']}" + Style.RESET_ALL, file=sys.stderr)
                 continue
 
-            host, ip = result["host"], result["ip"]
-            if ip in wildcard_ips:
+            host = result["host"]
+            ip = result.get("ip")
+            if ip is not None and ip in wildcard_ips:
                 continue
-            entry = {"host": host, "ip": ip}
+            entry = {"host": host}
+            if ip is not None:
+                entry["ip"] = ip
+            if "cname" in result:
+                entry["cname"] = result["cname"]
             if check_http_status:
                 http_result = check_http(host, timeout=timeout)
                 if http_result:
                     entry["url"], entry["status"] = http_result
             found.append(entry)
             if not quiet:
+                target = ip if ip is not None else entry.get("cname", "?")
+                cname_part = f" (CNAME {entry['cname']})" if "cname" in entry and ip is not None else ""
                 status_part = f" ({entry['url']} [{entry['status']}])" if "url" in entry else ""
-                tqdm.write(Fore.GREEN + f"[+] {host} -> {ip}" + Style.RESET_ALL + status_part)
+                tqdm.write(Fore.GREEN + f"[+] {host} -> {target}" + Style.RESET_ALL + cname_part + status_part)
 
     if errors and not quiet:
         print(Fore.RED + f"[!] {len(errors)} lookups failed after retries" + Style.RESET_ALL, file=sys.stderr)
@@ -245,7 +267,7 @@ def save_results(results, path, fmt=None):
         with open(path, "w", encoding="utf-8") as f:
             json.dump(results, f, indent=2)
     elif fmt == "csv":
-        fieldnames = ["host", "ip", "url", "status"]
+        fieldnames = ["host", "ip", "cname", "url", "status"]
         with open(path, "w", encoding="utf-8", newline="") as f:
             writer = csv.DictWriter(f, fieldnames=fieldnames)
             writer.writeheader()
@@ -254,7 +276,9 @@ def save_results(results, path, fmt=None):
     else:
         with open(path, "w", encoding="utf-8") as f:
             for entry in results:
-                line = f"{entry['host']} -> {entry['ip']}"
+                line = f"{entry['host']} -> {entry.get('ip', entry.get('cname', '?'))}"
+                if "cname" in entry and "ip" in entry:
+                    line += f" (CNAME {entry['cname']})"
                 if "url" in entry:
                     line += f" ({entry['url']} [{entry['status']}])"
                 f.write(line + "\n")
