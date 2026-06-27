@@ -93,6 +93,13 @@ python subdomain_finder.py example.com --quiet -o results.json
 
 A default wordlist is provided at [`wordlists/subdomains.txt`](wordlists/subdomains.txt). Swap it for a larger one (e.g. SecLists) with `-w`.
 
+## Testing
+
+```bash
+pip install -r requirements-dev.txt
+pytest
+```
+
 ## Disclaimer
 
 Only use this tool on domains you are authorized to test. Unauthorized scanning of systems you do not own or have explicit permission to test may be illegal.
