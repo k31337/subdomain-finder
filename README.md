@@ -20,7 +20,7 @@ A Python CLI tool to discover subdomains of a target domain via concurrent DNS r
 ## Installation
 
 ```bash
-git clone https://github.com/<your-username>/subdomain-finder.git
+git clone https://github.com/k31337/subdomain-finder.git
 cd subdomain-finder
 pip install -r requirements.txt
 ```
