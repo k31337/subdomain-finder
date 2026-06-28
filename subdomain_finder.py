@@ -160,7 +160,7 @@ def check_http(host, timeout=5, retries=1, backoff=0.5):
 
 def find_subdomains(domain, wordlist, threads=50, check_http_status=False,
                      timeout=3, retries=2, rate_limit=0, nameservers=None,
-                     skip_wildcard_check=False, quiet=False):
+                     skip_wildcard_check=False, quiet=False, jsonl=False):
     found = []
     errors = []
     limiter = RateLimiter(rate_limit)
@@ -183,7 +183,7 @@ def find_subdomains(domain, wordlist, threads=50, check_http_status=False,
             resolver = pool.next_resolver()
             futures[executor.submit(resolve, word, domain, retries=retries, resolver=resolver)] = word
 
-        progress = tqdm(as_completed(futures), total=len(futures), desc="Resolving", unit="host", disable=quiet)
+        progress = tqdm(as_completed(futures), total=len(futures), desc="Resolving", unit="host", disable=quiet or jsonl)
         for future in progress:
             try:
                 result = future.result(timeout=timeout)
@@ -195,7 +195,7 @@ def find_subdomains(domain, wordlist, threads=50, check_http_status=False,
 
             if "error" in result:
                 errors.append(result)
-                if not quiet:
+                if not quiet and not jsonl:
                     tqdm.write(Fore.RED + f"[!] {result['host']} -> {result['error']}" + Style.RESET_ALL, file=sys.stderr)
                 continue
 
@@ -213,13 +213,15 @@ def find_subdomains(domain, wordlist, threads=50, check_http_status=False,
                 if http_result:
                     entry["url"], entry["status"] = http_result
             found.append(entry)
-            if not quiet:
+            if jsonl:
+                print(json.dumps(entry), flush=True)
+            elif not quiet:
                 target = ip if ip is not None else entry.get("cname", "?")
                 cname_part = f" (CNAME {entry['cname']})" if "cname" in entry and ip is not None else ""
                 status_part = f" ({entry['url']} [{entry['status']}])" if "url" in entry else ""
                 tqdm.write(Fore.GREEN + f"[+] {host} -> {target}" + Style.RESET_ALL + cname_part + status_part)
 
-    if errors and not quiet:
+    if errors and not quiet and not jsonl:
         print(Fore.RED + f"[!] {len(errors)} lookups failed after retries" + Style.RESET_ALL, file=sys.stderr)
 
     return found
@@ -227,7 +229,7 @@ def find_subdomains(domain, wordlist, threads=50, check_http_status=False,
 
 def find_subdomains_recursive(domain, wordlist, max_depth=1, threads=50, check_http_status=False,
                                timeout=3, retries=2, rate_limit=0, nameservers=None,
-                               skip_wildcard_check=False, quiet=False):
+                               skip_wildcard_check=False, quiet=False, jsonl=False):
     """Repeatedly applies find_subdomains to discovered hosts, up to max_depth levels deep."""
     all_results = []
     seen_hosts = set()
@@ -236,12 +238,12 @@ def find_subdomains_recursive(domain, wordlist, max_depth=1, threads=50, check_h
     for depth in range(1, max_depth + 1):
         level_results = []
         for current_domain in current_domains:
-            if depth > 1 and not quiet:
+            if depth > 1 and not quiet and not jsonl:
                 print(Fore.CYAN + f"[*] Recursing into {current_domain} (depth {depth})..." + Style.RESET_ALL, file=sys.stderr)
             results = find_subdomains(
                 current_domain, wordlist, threads=threads, check_http_status=check_http_status,
                 timeout=timeout, retries=retries, rate_limit=rate_limit,
-                nameservers=nameservers, skip_wildcard_check=skip_wildcard_check, quiet=quiet
+                nameservers=nameservers, skip_wildcard_check=skip_wildcard_check, quiet=quiet, jsonl=jsonl
             )
             for entry in results:
                 if entry["host"] not in seen_hosts:
@@ -329,6 +331,11 @@ def main():
         help="Suppress progress bar and per-host/info messages; only print fatal errors and the final summary"
     )
     parser.add_argument(
+        "--jsonl", action="store_true",
+        help="Stream each found subdomain to stdout as a JSON object per line, for piping into other tools "
+             "(progress/info messages move to stderr)"
+    )
+    parser.add_argument(
         "--resolvers",
         help="Comma-separated list of DNS resolver IPs to round-robin lookups across "
              "(default: system resolver), e.g. 8.8.8.8,1.1.1.1"
@@ -348,32 +355,34 @@ def main():
         print(f"[!] Wordlist not found: {args.wordlist}", file=sys.stderr)
         sys.exit(1)
 
+    info_stream = sys.stderr if args.jsonl else sys.stdout
+
     if args.crt_sh:
         if not args.quiet:
-            print(Fore.CYAN + f"[*] Querying crt.sh for {args.domain}..." + Style.RESET_ALL)
+            print(Fore.CYAN + f"[*] Querying crt.sh for {args.domain}..." + Style.RESET_ALL, file=info_stream)
         crtsh_labels = fetch_crtsh_subdomains(args.domain)
         new_labels = crtsh_labels - set(wordlist)
         if not args.quiet:
-            print(Fore.CYAN + f"[*] crt.sh returned {len(crtsh_labels)} subdomains ({len(new_labels)} new)" + Style.RESET_ALL)
+            print(Fore.CYAN + f"[*] crt.sh returned {len(crtsh_labels)} subdomains ({len(new_labels)} new)" + Style.RESET_ALL, file=info_stream)
         wordlist = wordlist + sorted(new_labels)
 
     if not args.quiet:
-        print(Fore.CYAN + f"[*] Searching for subdomains of {args.domain} ({len(wordlist)} candidates)..." + Style.RESET_ALL)
+        print(Fore.CYAN + f"[*] Searching for subdomains of {args.domain} ({len(wordlist)} candidates)..." + Style.RESET_ALL, file=info_stream)
     nameservers = [ns.strip() for ns in args.resolvers.split(",") if ns.strip()] if args.resolvers else None
     results = find_subdomains_recursive(
         args.domain, wordlist, max_depth=max(1, args.recursive), threads=args.threads,
         check_http_status=args.http, timeout=args.timeout, retries=args.retries,
         rate_limit=args.rate_limit, nameservers=nameservers, skip_wildcard_check=args.no_wildcard_check,
-        quiet=args.quiet
+        quiet=args.quiet, jsonl=args.jsonl
     )
 
     if not args.quiet:
-        print(Style.BRIGHT + f"\n[*] Total found: {len(results)}" + Style.RESET_ALL)
+        print(Style.BRIGHT + f"\n[*] Total found: {len(results)}" + Style.RESET_ALL, file=info_stream)
 
     if args.output:
         save_results(results, args.output, fmt=args.format)
         if not args.quiet:
-            print(Fore.CYAN + f"[*] Results saved to {args.output}" + Style.RESET_ALL)
+            print(Fore.CYAN + f"[*] Results saved to {args.output}" + Style.RESET_ALL, file=info_stream)
 
 
 if __name__ == "__main__":

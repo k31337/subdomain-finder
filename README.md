@@ -16,6 +16,7 @@ A Python CLI tool to discover subdomains of a target domain via concurrent DNS r
 - Recursive brute-forcing of discovered subdomains (e.g. `sub.sub.example.com`)
 - Passive subdomain discovery via crt.sh certificate transparency logs
 - Export results as `txt`, `json`, or `csv`
+- JSON Lines streaming to stdout for piping into other tools
 
 ## Installation
 
@@ -48,6 +49,7 @@ python subdomain_finder.py example.com
 | `--no-wildcard-check` | Skip wildcard DNS detection | off (check enabled) |
 | `--crt-sh` | Augment the wordlist with subdomains found via crt.sh certificate transparency logs | off |
 | `-q, --quiet` | Suppress progress bar and per-host/info messages; only fatal errors and the final summary | off |
+| `--jsonl` | Stream each found subdomain to stdout as a JSON object per line; progress/info messages move to stderr | off |
 | `-o, --output` | File to save the results to | none |
 | `-f, --format` | Output format: `txt`, `json`, or `csv` (inferred from `--output` extension if not set) | `txt` |
 
@@ -87,6 +89,12 @@ Run quietly for scripting/CI, only saving results to a file:
 
 ```bash
 python subdomain_finder.py example.com --quiet -o results.json
+```
+
+Pipe discovered subdomains straight into another tool as they're found:
+
+```bash
+python subdomain_finder.py example.com --jsonl | jq -r '.host'
 ```
 
 ## Wordlists
