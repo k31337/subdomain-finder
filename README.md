@@ -2,6 +2,7 @@
 
 ![Python](https://img.shields.io/badge/python-3.8%2B-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
+[![CI](https://github.com/k31337/subdomain-finder/actions/workflows/ci.yml/badge.svg)](https://github.com/k31337/subdomain-finder/actions/workflows/ci.yml)
 
 A Python CLI tool to discover subdomains of a target domain via concurrent DNS resolution, with optional HTTP verification, rate limiting, and multi-resolver support.
 
