@@ -18,11 +18,21 @@ from tqdm import tqdm
 colorama_init()
 
 USER_AGENT = "Mozilla/5.0 (compatible; subdomain-finder)"
+VERSION = "1.0.0"
 
 
 def load_wordlist(path):
     with open(path, "r", encoding="utf-8") as f:
-        return [line.strip() for line in f if line.strip() and not line.startswith("#")]
+        lines = [line.strip() for line in f if line.strip() and not line.startswith("#")]
+    return list(dict.fromkeys(lines))
+
+
+def normalize_domain(domain):
+    domain = domain.strip().lower()
+    for prefix in ("https://", "http://"):
+        if domain.startswith(prefix):
+            domain = domain[len(prefix):]
+    return domain.rstrip("/.")
 
 
 class RateLimiter:
@@ -288,6 +298,7 @@ def save_results(results, path, fmt=None):
 
 def main():
     parser = argparse.ArgumentParser(description="Subdomain finder")
+    parser.add_argument("--version", action="version", version=f"%(prog)s {VERSION}")
     parser.add_argument("domain", help="Target domain, e.g. example.com")
     parser.add_argument(
         "-w", "--wordlist", default="wordlists/subdomains.txt",
@@ -348,6 +359,7 @@ def main():
         help="Output format (default: inferred from the output file extension, falls back to txt)"
     )
     args = parser.parse_args()
+    args.domain = normalize_domain(args.domain)
 
     try:
         wordlist = load_wordlist(args.wordlist)

@@ -23,6 +23,26 @@ def test_load_wordlist_missing_file_raises(tmp_path):
         sf.load_wordlist(str(tmp_path / "missing.txt"))
 
 
+def test_load_wordlist_deduplicates_preserving_order(tmp_path):
+    path = tmp_path / "words.txt"
+    path.write_text("www\napi\nwww\nmail\napi\n", encoding="utf-8")
+    assert sf.load_wordlist(str(path)) == ["www", "api", "mail"]
+
+
+# --- normalize_domain ----------------------------------------------------
+
+@pytest.mark.parametrize("raw,expected", [
+    ("example.com", "example.com"),
+    ("EXAMPLE.com", "example.com"),
+    ("  example.com  ", "example.com"),
+    ("https://example.com", "example.com"),
+    ("http://example.com/", "example.com"),
+    ("example.com.", "example.com"),
+])
+def test_normalize_domain(raw, expected):
+    assert sf.normalize_domain(raw) == expected
+
+
 # --- RateLimiter ---------------------------------------------------------
 
 def test_rate_limiter_disabled_does_not_block():
